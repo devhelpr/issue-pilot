@@ -18,3 +18,5 @@ Configure the Worker URL and desktop token, discover repositories, link each act
 React renders the five screens. Rust owns all authenticated Worker requests, credentials, SQLite, process spawning, worktrees and the single-running-job mutex; the frontend never receives the token. Process arguments are passed as argument lists; only the user-confirmed test command is interpreted by a platform shell.
 
 The Worker does not yet provide all recovery/pagination guarantees required for unattended execution. See [docs/backend-gaps.md](docs/backend-gaps.md) before production use.
+
+The Jobs screen's “Show local diagnostics” action displays the local runner trace alongside the current Worker job snapshot. It includes claim/status request paths, request IDs, phase changes, heartbeat failures, CLI exit codes, retained worktree paths, and terminal-status outbox state. A successful local run commits, pushes, creates a draft PR, and reports the commit and PR URL back to the Worker; if that final response is lost, the terminal payload is retried from the local outbox on the next run.
