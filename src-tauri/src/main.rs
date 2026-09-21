@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use keyring::Entry;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -41,7 +41,7 @@ struct SettingsInput {
     git_path: Option<String>,
     gh_path: Option<String>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RepoLink {
     repository_id: i64,
@@ -999,6 +999,27 @@ async fn save_repo_link(input: RepoLink, state: State<'_, AppState>) -> Result<(
     Ok(())
 }
 #[tauri::command]
+async fn get_repo_link(
+    repository_id: i64,
+    state: State<'_, AppState>,
+) -> Result<Option<RepoLink>, String> {
+    let db = state.db.lock().await;
+    db.query_row(
+        "SELECT local_path,base_branch,test_command FROM repo_links WHERE repository_id=?",
+        [repository_id],
+        |row| {
+            Ok(RepoLink {
+                repository_id,
+                local_path: row.get(0)?,
+                base_branch: row.get(1)?,
+                test_command: row.get(2)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|error| error.to_string())
+}
+#[tauri::command]
 async fn list_checkpoints(state: State<'_, AppState>) -> Result<Vec<Value>, String> {
     let db = state.db.lock().await;
     let mut query = db.prepare("SELECT job_id,phase,worktree,branch,detail,updated_at FROM checkpoints ORDER BY updated_at DESC").map_err(|error| error.to_string())?;
@@ -1070,6 +1091,7 @@ fn main() {
             check_worker_connection,
             worker_request,
             save_repo_link,
+            get_repo_link,
             list_checkpoints,
             list_job_debug,
             check_tools,
