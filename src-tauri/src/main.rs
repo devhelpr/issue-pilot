@@ -87,15 +87,26 @@ fn init(app: &tauri::AppHandle) -> Result<Connection> {
 
 fn truncated(value: impl AsRef<str>) -> String {
     const MAX: usize = 8_000;
+    truncated_to(value, MAX)
+}
+
+fn truncated_to(value: impl AsRef<str>, max_bytes: usize) -> String {
     let value = value.as_ref();
-    if value.len() <= MAX {
+    if value.len() <= max_bytes {
         return value.to_string();
     }
-    let mut end = MAX;
+    let suffix = format!("\n… response truncated after {max_bytes} bytes");
+    let content_limit = max_bytes.saturating_sub(suffix.len());
+    let mut end = content_limit;
     while end > 0 && !value.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}\n… response truncated after {MAX} bytes", &value[..end])
+    format!("{}{}", &value[..end], suffix)
+}
+
+fn worker_summary(value: impl AsRef<str>) -> String {
+    // Keep this in sync with the Worker status endpoint's summary schema.
+    truncated_to(value, 4_000)
 }
 
 async fn debug_event(
@@ -320,7 +331,7 @@ async fn report_status(
         payload.insert("status".into(), Value::String(value.to_string()));
     }
     if let Some(value) = summary {
-        payload.insert("summary".into(), Value::String(truncated(value)));
+        payload.insert("summary".into(), Value::String(worker_summary(value)));
     }
     if let Some(value) = commit_sha {
         payload.insert("commit_sha".into(), Value::String(value));
@@ -387,7 +398,16 @@ async fn flush_outbox(s: &AppState) {
         }
     };
     for (outbox_id, job_id, payload) in rows {
-        let body = serde_json::from_str::<Value>(&payload).unwrap_or(Value::Null);
+        let mut body = serde_json::from_str::<Value>(&payload).unwrap_or(Value::Null);
+        // Older clients could persist an oversized summary before the Worker
+        // schema rejected it. Normalize those records before retrying them.
+        if let Some(summary) = body
+            .get("summary")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        {
+            body["summary"] = Value::String(worker_summary(summary));
+        }
         match traced_worker(
             s,
             &job_id,
@@ -712,7 +732,7 @@ async fn run_claimed(
         claim,
         Some("creating_pr"),
         Some("succeeded"),
-        Some(truncated(summary)),
+        Some(summary),
         Some(sha.clone()),
         Some(pr_url.clone()),
         true,
@@ -1099,4 +1119,23 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("tauri error");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{truncated_to, worker_summary};
+
+    #[test]
+    fn worker_summary_stays_within_worker_limit() {
+        let summary = "x".repeat(8_000);
+        assert!(worker_summary(summary).len() <= 4_000);
+    }
+
+    #[test]
+    fn truncation_preserves_utf8_boundaries() {
+        let summary = "🙂".repeat(2_000);
+        let result = truncated_to(summary, 4_000);
+        assert!(result.len() <= 4_000);
+        assert!(result.contains("response truncated"));
+    }
 }
