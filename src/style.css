@@ -202,6 +202,25 @@ pre {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+.job-card a,
+.runner-result a {
+  color: #a9c9ff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.job-card a:visited,
+.runner-result a:visited {
+  color: #c7b8ff;
+}
+.job-card a:hover,
+.runner-result a:hover {
+  color: #e0ecff;
+}
+.job-card a:focus-visible,
+.runner-result a:focus-visible {
+  outline: 2px solid #d7e7ff;
+  outline-offset: 3px;
+}
 .job-status {
   color: #c9d5e6;
 }
@@ -289,6 +308,131 @@ pre {
 }
 .repo-access.revoked {
   color: #ffab8c;
+}
+.job-progress {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid #365578;
+  border-radius: 9px;
+  background: #122238;
+}
+.job-progress-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #e5efff;
+}
+.job-progress-percent {
+  margin-left: auto;
+  color: #a9c9f6;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+}
+.job-spinner,
+.job-progress-dot {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border-radius: 50%;
+}
+.job-spinner {
+  border: 2px solid #55749b;
+  border-top-color: #83b8ff;
+  animation: job-spin 0.8s linear infinite;
+}
+.job-progress-dot {
+  width: 9px;
+  height: 9px;
+  flex-basis: 9px;
+  margin: 0 3.5px;
+  background: #67d69d;
+}
+.job-progress-track {
+  height: 6px;
+  margin: 11px 0 7px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #26364c;
+}
+.job-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #438df5, #65d6b0);
+  transition: width 0.35s ease;
+}
+.job-progress p,
+.job-queue-note {
+  margin: 0;
+  color: #aebfd5;
+  font-size: 0.88rem;
+}
+.job-queue-note {
+  margin: 10px 0;
+}
+.job-result-summary {
+  padding: 10px 12px;
+  border-left: 3px solid #5a8fe0;
+  background: #121c2a;
+  color: #d5e0ef;
+}
+.runner-result {
+  max-width: 860px;
+  margin: 14px 0 20px;
+  padding: 13px 16px;
+  border: 1px solid #35785a;
+  border-radius: 9px;
+  background: #14281f;
+}
+.runner-result.failure {
+  border-color: #a84d4d;
+  background: #2a1a1d;
+}
+.runner-result-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.runner-result h3 {
+  margin: 0;
+  text-transform: capitalize;
+}
+.runner-result p {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+}
+.runner-result a {
+  display: inline-block;
+  margin-top: 8px;
+}
+.runner-result details {
+  margin: 10px 0 0;
+  color: #b9c8d9;
+}
+.result-check {
+  color: #83e3b0;
+  font-size: 1.2rem;
+}
+.issue-job-status {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #2b394f;
+}
+.issue-job-status h3 {
+  margin: 0 0 8px;
+}
+@keyframes job-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .job-spinner {
+    animation-duration: 2s;
+  }
+  .job-progress-track span {
+    transition: none;
+  }
 }
 .check-control {
   position: relative;

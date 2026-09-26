@@ -39,7 +39,9 @@ function App() {
     [jobDebug, setJobDebug] = useState<JobDebugEvent[]>([]),
     [jobServerSnapshot, setJobServerSnapshot] = useState<unknown>(null),
     [jobRunResult, setJobRunResult] = useState<unknown>(null),
-    [autoQueue, setAutoQueue] = useState<Issue[]>([]);
+    [autoQueue, setAutoQueue] = useState<Issue[]>([]),
+    [activeJobId, setActiveJobId] = useState<string | null>(null),
+    [autoStartedJobIds, setAutoStartedJobIds] = useState<Set<string>>(() => new Set());
   const busy = useRef(false);
   const delay = useRef(10_000);
   const followState = useRef(readFollowState());
@@ -161,7 +163,28 @@ function App() {
     if (server.status === 'fulfilled') setJobServerSnapshot(server.value);
     else setJobServerSnapshot({ error: server.reason?.message || String(server.reason), jobId });
   };
-  const run = async (job: Job, issueOverride?: Issue) => {
+  useEffect(() => {
+    if (!activeJobId) return;
+    let cancelled = false;
+    const refreshActiveJob = async () => {
+      const [local, remote] = await Promise.allSettled([
+        invoke<JobDebugEvent[]>('list_job_debug', { jobId: activeJobId }),
+        api.job(activeJobId),
+      ]);
+      if (cancelled) return;
+      if (local.status === 'fulfilled') setJobDebug(local.value);
+      if (remote.status === 'fulfilled') {
+        setJobs((current) => current.map((job) => (job.id === activeJobId ? remote.value : job)));
+      }
+    };
+    void refreshActiveJob();
+    const interval = window.setInterval(refreshActiveJob, 1_500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeJobId]);
+  const run = async (job: Job, issueOverride?: Issue, startedAutomatically = false) => {
     const issue = issueOverride || issues.find((i) => i.id === job.issue_id);
     if (!issue) {
       setMessage(
@@ -178,6 +201,11 @@ function App() {
       issue_url: issue.html_url,
     };
     try {
+      setActiveJobId(job.id);
+      setJobDebug([]);
+      if (startedAutomatically) {
+        setAutoStartedJobIds((current) => new Set(current).add(job.id));
+      }
       setMessage('Claiming and starting local runner…');
       const result = await invoke('execute_job', { job: enriched });
       setJobRunResult({ jobId: job.id, ok: true, result });
@@ -189,6 +217,8 @@ function App() {
       setJobRunResult({ jobId: job.id, ok: false, error: e.message || String(e) });
       setMessage(`Job stopped: ${e.message || e}`);
       await inspectJob(job.id);
+    } finally {
+      setActiveJobId(null);
     }
   };
   useEffect(() => {
@@ -221,7 +251,7 @@ function App() {
         followState.current = markIssueSeen(followState.current, issue);
         writeFollowState(followState.current);
         if (job.status === 'queued') {
-          await run(job, issue);
+          await run(job, issue, true);
         } else {
           setMessage(`Job for issue #${issue.number} is already ${job.status}.`);
         }
@@ -376,6 +406,29 @@ function App() {
             <article className="detail">
               {selected ? (
                 <>
+                  {(() => {
+                    const issueJob = jobs.find((job) => job.issue_id === selected.id);
+                    if (!issueJob) return null;
+                    return (
+                      <section className="issue-job-status" aria-live="polite">
+                        <h3>
+                          {autoStartedJobIds.has(issueJob.id)
+                            ? 'Started automatically'
+                            : issueJob.status === 'queued'
+                              ? 'Approved and queued'
+                              : 'Job status'}
+                        </h3>
+                        <JobProgress
+                          job={issueJob}
+                          events={issueJob.id === activeJobId ? jobDebug : []}
+                          locallyRunning={issueJob.id === activeJobId}
+                        />
+                        <button className="secondary" onClick={() => setTab('jobs')}>
+                          View job details
+                        </button>
+                      </section>
+                    );
+                  })()}
                   <h2>
                     #{selected.number} {selected.title}
                   </h2>
@@ -387,12 +440,14 @@ function App() {
                     ))}
                   </p>
                   <ReactMarkdown skipHtml>{selected.body || '_No description._'}</ReactMarkdown>
-                  <button
-                    onClick={() => approve(selected)}
-                    disabled={!Boolean(selected.active) || selected.state !== 'open'}
-                  >
-                    Approve for local execution
-                  </button>
+                  {!jobs.some((job) => job.issue_id === selected.id) && (
+                    <button
+                      onClick={() => approve(selected)}
+                      disabled={!Boolean(selected.active) || selected.state !== 'open'}
+                    >
+                      Approve for local execution
+                    </button>
+                  )}
                 </>
               ) : (
                 <p>Select an issue to review its immutable version before approval.</p>
@@ -409,12 +464,7 @@ function App() {
             the current baseline are approved, queued and started automatically. Jobs require a
             linked checkout.
           </p>
-          {Boolean(jobRunResult) && (
-            <details className="diagnostic-panel" open>
-              <summary>Last runner result</summary>
-              <DiagnosticBlock value={jobRunResult} />
-            </details>
-          )}
+          {Boolean(jobRunResult) && <RunnerResult result={jobRunResult} />}
           <div className="job-list">
             {jobs.map((j) => {
               const issue = issues.find((i) => i.id === j.issue_id);
@@ -425,7 +475,17 @@ function App() {
                     <b>{j.status}</b> {j.phase && `· ${j.phase}`}
                     {j.stop_requested && ' · stop requested'}
                   </p>
-                  {j.result_summary && <p>{j.result_summary}</p>}
+                  {(activeJobId === j.id ||
+                    ['running', 'claimed', 'in_progress'].includes(j.status)) && (
+                    <JobProgress
+                      job={j}
+                      events={j.id === activeJobId ? jobDebug : []}
+                      locallyRunning={j.id === activeJobId}
+                    />
+                  )}
+                  {j.result_summary && (
+                    <p className="job-result-summary">{compactSummary(j.result_summary)}</p>
+                  )}
                   {j.commit_sha && <code className="job-sha">{j.commit_sha}</code>}
                   {j.pr_url && (
                     <p>
@@ -529,6 +589,9 @@ function App() {
     jobDebug,
     jobServerSnapshot,
     jobRunResult,
+    activeJobId,
+    autoStartedJobIds,
+    run,
   ]);
   return (
     <main>
@@ -567,6 +630,135 @@ function formatDiagnostic(value: unknown): string {
     .replace(/\\r\\n/g, '\n')
     .replace(/\\n/g, '\n')
     .replace(/\\t/g, '\t');
+}
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+function progressFor(job: Job, events: JobDebugEvent[]) {
+  const terminal = ['succeeded', 'completed', 'failed', 'cancelled', 'interrupted'].includes(
+    job.status,
+  );
+  const phase = (events[0]?.phase || job.phase || '').toLowerCase();
+  const stages: Record<string, { label: string; percent: number }> = {
+    preflight: { label: 'Starting local runner', percent: 8 },
+    claim: { label: 'Claiming job', percent: 14 },
+    preparing: { label: 'Preparing isolated checkout', percent: 22 },
+    analyzing: { label: 'Starting work', percent: 22 },
+    fixing: { label: 'Working on the issue', percent: 42 },
+    testing: { label: 'Running tests', percent: 62 },
+    committing: { label: 'Committing changes', percent: 79 },
+    creating_pr: { label: 'Creating draft pull request', percent: 92 },
+    completed: { label: 'Job completed', percent: 100 },
+    failed: { label: 'Job stopped', percent: 100 },
+  };
+  const stage = stages[phase] || { label: 'Starting local runner', percent: 8 };
+  const activity = events.find(
+    (event) =>
+      !['Worker request started', 'Worker request succeeded', 'Local command finished'].includes(
+        event.message,
+      ),
+  )?.message;
+  return {
+    ...stage,
+    terminal,
+    activity,
+  };
+}
+function JobProgress({
+  job,
+  events,
+  locallyRunning,
+}: {
+  job: Job;
+  events: JobDebugEvent[];
+  locallyRunning: boolean;
+}) {
+  if (job.status === 'queued' && !locallyRunning) {
+    return <p className="job-queue-note">Waiting in the queue to run locally.</p>;
+  }
+  const progress = progressFor(job, events);
+  const active =
+    !progress.terminal &&
+    (locallyRunning || ['running', 'claimed', 'in_progress'].includes(job.status));
+  return (
+    <div className="job-progress" aria-live="polite">
+      <div className="job-progress-heading">
+        {active ? (
+          <span className="job-spinner" aria-hidden="true" />
+        ) : (
+          <span className="job-progress-dot" />
+        )}
+        <b>{progress.label}</b>
+        {active && <span className="job-progress-percent">{progress.percent}%</span>}
+      </div>
+      <div
+        className="job-progress-track"
+        role="progressbar"
+        aria-label="Job progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress.percent}
+      >
+        <span style={{ width: `${progress.percent}%` }} />
+      </div>
+      <p>{active ? progress.activity || 'The local agent is working…' : job.status}</p>
+    </div>
+  );
+}
+function compactSummary(summary: string): string {
+  const trimmed = summary.trim();
+  if (!trimmed) return '';
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    const value = asRecord(parsed);
+    const short = [value.summary, value.message, value.result].find(
+      (candidate) => typeof candidate === 'string' && candidate.trim(),
+    ) as string | undefined;
+    if (short) return short.trim().slice(0, 220);
+    if (typeof value.status === 'string') return `Job ${value.status}.`;
+  } catch {
+    // Worker summaries are often plain text rather than JSON.
+  }
+  const singleLine = trimmed.replace(/\s+/g, ' ');
+  return singleLine.length > 220 ? `${singleLine.slice(0, 217)}…` : singleLine;
+}
+function RunnerResult({ result }: { result: unknown }) {
+  const envelope = asRecord(result);
+  const data = asRecord(envelope.result);
+  const ok = envelope.ok === true;
+  const status = typeof data.status === 'string' ? data.status : ok ? 'finished' : 'stopped';
+  const error = typeof envelope.error === 'string' ? envelope.error : '';
+  const sha = typeof data.commit_sha === 'string' ? data.commit_sha : '';
+  const prUrl = typeof data.pr_url === 'string' ? data.pr_url : '';
+  const shortSha = sha ? sha.slice(0, 8) : '';
+  return (
+    <section className={`runner-result ${ok ? 'success' : 'failure'}`} aria-live="polite">
+      <div className="runner-result-heading">
+        <h3>Last run: {status}</h3>
+        {ok && (
+          <span className="result-check" aria-label="Successful">
+            ✓
+          </span>
+        )}
+      </div>
+      {error && <p>{compactSummary(error)}</p>}
+      {shortSha && (
+        <p>
+          Commit <code>{shortSha}</code>
+        </p>
+      )}
+      {prUrl && <a href={prUrl}>Open draft pull request</a>}
+      {data.worker_reported === false && (
+        <p>Result saved locally; Worker status is still pending.</p>
+      )}
+      <details>
+        <summary>Full runner details</summary>
+        <DiagnosticBlock value={result} />
+      </details>
+    </section>
+  );
 }
 function DiagnosticBlock({ value, className = '' }: { value: unknown; className?: string }) {
   return <pre className={`diagnostic ${className}`.trim()}>{formatDiagnostic(value)}</pre>;
