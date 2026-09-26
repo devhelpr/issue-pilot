@@ -46,6 +46,7 @@ function App() {
   const delay = useRef(10_000);
   const followState = useRef(readFollowState());
   const autoRunning = useRef(false);
+  const runningJobId = useRef<string | null>(null);
   const load = useCallback(async () => {
     if (busy.current) return;
     busy.current = true;
@@ -185,6 +186,10 @@ function App() {
     };
   }, [activeJobId]);
   const run = async (job: Job, issueOverride?: Issue, startedAutomatically = false) => {
+    if (runningJobId.current) {
+      setMessage(`Job ${runningJobId.current} is already running.`);
+      return;
+    }
     const issue = issueOverride || issues.find((i) => i.id === job.issue_id);
     if (!issue) {
       setMessage(
@@ -200,9 +205,11 @@ function App() {
       issue_number: issue.number,
       issue_url: issue.html_url,
     };
+    runningJobId.current = job.id;
     try {
       setActiveJobId(job.id);
       setJobDebug([]);
+      setJobRunResult(null);
       if (startedAutomatically) {
         setAutoStartedJobIds((current) => new Set(current).add(job.id));
       }
@@ -214,11 +221,21 @@ function App() {
       setRecovery(await invoke('list_checkpoints'));
       await inspectJob(job.id);
     } catch (e: any) {
-      setJobRunResult({ jobId: job.id, ok: false, error: e.message || String(e) });
-      setMessage(`Job stopped: ${e.message || e}`);
-      await inspectJob(job.id);
+      const errorMessage = e.message || String(e);
+      if (errorMessage.includes('Another job is already executing')) {
+        setMessage('Another job is already running. This start request was ignored.');
+        setActiveJobId(null);
+        await load();
+      } else {
+        setJobRunResult({ jobId: job.id, ok: false, error: errorMessage });
+        setMessage(`Job stopped: ${errorMessage}`);
+        await inspectJob(job.id);
+      }
     } finally {
-      setActiveJobId(null);
+      if (runningJobId.current === job.id) {
+        runningJobId.current = null;
+        setActiveJobId(null);
+      }
     }
   };
   useEffect(() => {
@@ -486,7 +503,6 @@ function App() {
                   {j.result_summary && (
                     <p className="job-result-summary">{compactSummary(j.result_summary)}</p>
                   )}
-                  {j.commit_sha && <code className="job-sha">{j.commit_sha}</code>}
                   {j.pr_url && (
                     <p>
                       <a href={j.pr_url}>Open draft PR</a>
@@ -495,7 +511,7 @@ function App() {
                   <div className="job-actions">
                     {j.status === 'queued' && (
                       <>
-                        <button onClick={() => run(j)} disabled={!issue}>
+                        <button onClick={() => run(j)} disabled={!issue || activeJobId !== null}>
                           Run locally
                         </button>
                         {!issue && (

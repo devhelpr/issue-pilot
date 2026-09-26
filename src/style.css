@@ -197,8 +197,7 @@ pre {
 }
 .job-card h3,
 .job-card p,
-.job-card a,
-.job-sha {
+.job-card a {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -223,10 +222,6 @@ pre {
 }
 .job-status {
   color: #c9d5e6;
-}
-.job-sha {
-  display: block;
-  white-space: pre-wrap;
 }
 .job-actions {
   display: flex;
