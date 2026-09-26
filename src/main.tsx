@@ -3,6 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import ReactMarkdown from 'react-markdown';
 import { createApi } from './api';
+import {
+  markIssueSeen,
+  observeFollowedIssues,
+  readFollowState,
+  writeFollowState,
+} from './followIssues';
 import type { Issue, Job, JobDebugEvent, Repository, Settings } from './types';
 import './style.css';
 
@@ -32,9 +38,12 @@ function App() {
     [syncDebug, setSyncDebug] = useState<unknown>(null),
     [jobDebug, setJobDebug] = useState<JobDebugEvent[]>([]),
     [jobServerSnapshot, setJobServerSnapshot] = useState<unknown>(null),
-    [jobRunResult, setJobRunResult] = useState<unknown>(null);
+    [jobRunResult, setJobRunResult] = useState<unknown>(null),
+    [autoQueue, setAutoQueue] = useState<Issue[]>([]);
   const busy = useRef(false);
   const delay = useRef(10_000);
+  const followState = useRef(readFollowState());
+  const autoRunning = useRef(false);
   const load = useCallback(async () => {
     if (busy.current) return;
     busy.current = true;
@@ -57,8 +66,15 @@ function App() {
         })),
       });
       try {
-        const [i, j] = await Promise.all([api.issues(filter), api.jobs()]);
-        setIssues(i.items);
+        const [i, j] = await Promise.all([api.issues(), api.jobs()]);
+        const observed = observeFollowedIssues(followState.current, r.items, i.items);
+        followState.current = observed.state;
+        writeFollowState(followState.current);
+        setAutoQueue((current) => {
+          const queued = new Set(current.map((issue) => issue.id));
+          return [...current, ...observed.newIssues.filter((issue) => !queued.has(issue.id))];
+        });
+        setIssues(filter ? i.items.filter((issue) => issue.repository_id === filter) : i.items);
         setJobs(j.items);
         setOffline(false);
         delay.current = 10_000;
@@ -145,8 +161,8 @@ function App() {
     if (server.status === 'fulfilled') setJobServerSnapshot(server.value);
     else setJobServerSnapshot({ error: server.reason?.message || String(server.reason), jobId });
   };
-  const run = async (job: Job) => {
-    const issue = issues.find((i) => i.id === job.issue_id);
+  const run = async (job: Job, issueOverride?: Issue) => {
+    const issue = issueOverride || issues.find((i) => i.id === job.issue_id);
     if (!issue) {
       setMessage(
         'Cannot start: the issue is not in the loaded open-issue list. Refresh before running.',
@@ -175,6 +191,50 @@ function App() {
       await inspectJob(job.id);
     }
   };
+  useEffect(() => {
+    if (autoRunning.current || !autoQueue.length) return;
+    const issue = autoQueue[0];
+    const repository = repos.find((repo) => repo.id === issue.repository_id);
+    if (!repository || !Boolean(repository.active)) {
+      setAutoQueue((current) => current.slice(1));
+      return;
+    }
+
+    autoRunning.current = true;
+    void (async () => {
+      try {
+        setMessage(`New issue detected in ${issue.full_name}; creating a job…`);
+        let approvalError: unknown;
+        try {
+          await api.approve(issue.id, issue.version, `auto-follow-${issue.id}-${issue.version}`);
+        } catch (error) {
+          approvalError = error;
+        }
+
+        const refreshedJobs = await api.jobs();
+        setJobs(refreshedJobs.items);
+        const job = refreshedJobs.items.find((candidate) => candidate.issue_id === issue.id);
+        if (!job) {
+          throw approvalError || new Error('Worker did not return a job for the new issue.');
+        }
+
+        followState.current = markIssueSeen(followState.current, issue);
+        writeFollowState(followState.current);
+        if (job.status === 'queued') {
+          await run(job, issue);
+        } else {
+          setMessage(`Job for issue #${issue.number} is already ${job.status}.`);
+        }
+      } catch (error: any) {
+        setMessage(
+          `Could not automatically start issue #${issue.number}: ${error.message || error}`,
+        );
+      } finally {
+        autoRunning.current = false;
+        setAutoQueue((current) => current.slice(1));
+      }
+    })();
+  }, [autoQueue, repos, issues]);
   const content = useMemo(() => {
     if (tab === 'settings')
       return (
@@ -345,8 +405,9 @@ function App() {
       return (
         <div className="jobs-page">
           <p className="hint">
-            The app executes at most one job. A local runner records every Worker request and CLI
-            exit code below. Jobs require a linked checkout and a currently loaded issue mapping.
+            The app executes at most one job. When Follow issues is enabled, issues discovered after
+            the current baseline are approved, queued and started automatically. Jobs require a
+            linked checkout.
           </p>
           {Boolean(jobRunResult) && (
             <details className="diagnostic-panel" open>

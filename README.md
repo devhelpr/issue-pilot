@@ -9,7 +9,7 @@ npm install
 npm run tauri dev
 ```
 
-Configure the Worker URL and desktop token, discover repositories, link each active repository to a local checkout, then approve and execute an issue. The runner creates a retained worktree below `.issue-pilot-worktrees`, invokes the installed authenticated `codex exec --sandbox workspace-write`, runs the confirmed test command, and only then commits, pushes and creates a draft PR.
+Configure the Worker URL and desktop token, discover repositories, and link each active repository to a local checkout. When `Follow issues` is enabled, the desktop establishes a baseline and automatically approves, creates and starts a job for issues discovered afterward. The runner creates a retained worktree below `.issue-pilot-worktrees`, invokes the installed authenticated `codex exec --sandbox workspace-write`, runs the confirmed test command, and only then commits, pushes and creates a draft PR.
 
 `codex exec` is used because the [official non-interactive mode documentation](https://developers.openai.com/docs/non-interactive-mode) describes it as the scripting interface and notes that it reuses CLI authentication. No API key is assumed.
 
