@@ -47,6 +47,8 @@ function App() {
   const followState = useRef(readFollowState());
   const autoRunning = useRef(false);
   const runningJobId = useRef<string | null>(null);
+  const commentPollAfter = useRef(new Map<string, number>());
+  const nextCommentPollAt = useRef(0);
   const load = useCallback(async () => {
     if (busy.current) return;
     busy.current = true;
@@ -186,6 +188,9 @@ function App() {
     };
   }, [activeJobId]);
   const run = async (job: Job, issueOverride?: Issue, startedAutomatically = false) => {
+    while (startedAutomatically && runningJobId.current) {
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+    }
     if (runningJobId.current) {
       setMessage(`Job ${runningJobId.current} is already running.`);
       return;
@@ -282,6 +287,61 @@ function App() {
       }
     })();
   }, [autoQueue, repos, issues]);
+  useEffect(() => {
+    if (activeJobId || runningJobId.current) return;
+    const now = Date.now();
+    if (now < nextCommentPollAt.current) return;
+    const job = jobs
+      .filter((candidate) => candidate.status === 'succeeded' && Boolean(candidate.pr_url))
+      .sort(
+        (first, second) => Date.parse(second.created_at || '') - Date.parse(first.created_at || ''),
+      )
+      .find((candidate) => now >= (commentPollAfter.current.get(candidate.id) || 0));
+    if (!job) return;
+    const issue = issues.find((candidate) => candidate.id === job.issue_id);
+    if (!issue) return;
+
+    runningJobId.current = job.id;
+    setActiveJobId(job.id);
+    setJobDebug([]);
+    void invoke<{ checked: number; ignored: number; updated: number }>('process_issue_comments', {
+      job: {
+        ...job,
+        repository_id: issue.repository_id,
+        issue_number: issue.number,
+        issue_url: issue.html_url,
+      },
+    })
+      .then((result) => {
+        if (result.updated > 0) {
+          setMessage(
+            `Applied ${result.updated} issue ${result.updated === 1 ? 'change request' : 'change requests'} to the existing pull request.`,
+          );
+          setJobRunResult({
+            jobId: job.id,
+            ok: true,
+            result: {
+              status: 'feedback_applied',
+              summary: `${result.updated} issue change request(s) added to the existing pull request.`,
+              pr_url: job.pr_url,
+            },
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        if (!detail.includes('Runner is busy')) {
+          setMessage(`Could not review issue comments for #${issue.number}: ${detail}`);
+        }
+      })
+      .finally(() => {
+        const nextPoll = Date.now() + 10_000;
+        commentPollAfter.current.set(job.id, nextPoll);
+        nextCommentPollAt.current = nextPoll;
+        runningJobId.current = null;
+        setActiveJobId(null);
+      });
+  }, [jobs, issues, activeJobId, load]);
   const content = useMemo(() => {
     if (tab === 'settings')
       return (
@@ -479,7 +539,8 @@ function App() {
           <p className="hint">
             The app executes at most one job. When Follow issues is enabled, issues discovered after
             the current baseline are approved, queued and started automatically. Jobs require a
-            linked checkout.
+            linked checkout. New issue comments are screened; requested changes update the existing
+            draft PR.
           </p>
           {Boolean(jobRunResult) && <RunnerResult result={jobRunResult} />}
           <div className="job-list">
@@ -666,6 +727,12 @@ function progressFor(job: Job, events: JobDebugEvent[]) {
     testing: { label: 'Running tests', percent: 62 },
     committing: { label: 'Committing changes', percent: 79 },
     creating_pr: { label: 'Creating draft pull request', percent: 92 },
+    'comment-review': { label: 'Checking new issue comments', percent: 10 },
+    'comment-classification': { label: 'Evaluating an issue comment', percent: 22 },
+    'comment-update': { label: 'Applying requested changes', percent: 48 },
+    'comment-testing': { label: 'Testing requested changes', percent: 68 },
+    'comment-committing': { label: 'Updating the pull request commit', percent: 84 },
+    'comment-pushing': { label: 'Pushing changes to the existing PR', percent: 95 },
     completed: { label: 'Job completed', percent: 100 },
     failed: { label: 'Job stopped', percent: 100 },
   };
@@ -696,8 +763,8 @@ function JobProgress({
   }
   const progress = progressFor(job, events);
   const active =
-    !progress.terminal &&
-    (locallyRunning || ['running', 'claimed', 'in_progress'].includes(job.status));
+    locallyRunning ||
+    (!progress.terminal && ['running', 'claimed', 'in_progress'].includes(job.status));
   return (
     <div className="job-progress" aria-live="polite">
       <div className="job-progress-heading">
@@ -746,6 +813,7 @@ function RunnerResult({ result }: { result: unknown }) {
   const ok = envelope.ok === true;
   const status = typeof data.status === 'string' ? data.status : ok ? 'finished' : 'stopped';
   const error = typeof envelope.error === 'string' ? envelope.error : '';
+  const summary = typeof data.summary === 'string' ? data.summary : '';
   const sha = typeof data.commit_sha === 'string' ? data.commit_sha : '';
   const prUrl = typeof data.pr_url === 'string' ? data.pr_url : '';
   const shortSha = sha ? sha.slice(0, 8) : '';
@@ -760,6 +828,7 @@ function RunnerResult({ result }: { result: unknown }) {
         )}
       </div>
       {error && <p>{compactSummary(error)}</p>}
+      {summary && <p>{compactSummary(summary)}</p>}
       {shortSha && (
         <p>
           Commit <code>{shortSha}</code>

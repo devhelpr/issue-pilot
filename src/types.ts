@@ -29,6 +29,7 @@ export type Job = {
   issue_title: string;
   issue_body: string | null;
   status: string;
+  created_at?: string | null;
   phase?: string | null;
   claim_id?: string | null;
   stop_requested?: number | boolean;

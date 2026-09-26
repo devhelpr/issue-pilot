@@ -11,6 +11,8 @@ npm run tauri dev
 
 Configure the Worker URL and desktop token, discover repositories, and link each active repository to a local checkout. When `Follow issues` is enabled, the desktop establishes a baseline and automatically approves, creates and starts a job for issues discovered afterward. The runner creates a retained worktree below `.issue-pilot-worktrees`, invokes the installed authenticated `codex exec --sandbox workspace-write`, runs the confirmed test command, and only then commits, pushes and creates a draft PR.
 
+For successful jobs with an open pull request, the desktop periodically checks issue comments received by the Worker’s GitHub webhook. Codex classifies new comments in read-only mode. Comments and unrelated feedback are ignored; change requests are applied in the original retained worktree, tested, committed, and pushed to the existing PR branch. Reviewed comment IDs and decisions are stored in the local SQLite database. On the first scan, comments last updated before job creation are treated as the initial baseline. If the Worker does not include a job creation time, comments already present at the first scan become the baseline.
+
 `codex exec` is used because the [official non-interactive mode documentation](https://developers.openai.com/docs/non-interactive-mode) describes it as the scripting interface and notes that it reuses CLI authentication. No API key is assumed.
 
 ## Architecture and limits
