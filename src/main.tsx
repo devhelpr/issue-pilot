@@ -41,6 +41,8 @@ function App() {
     [jobRunResult, setJobRunResult] = useState<unknown>(null),
     [autoQueue, setAutoQueue] = useState<Issue[]>([]),
     [activeJobId, setActiveJobId] = useState<string | null>(null),
+    [commentCheckingJobId, setCommentCheckingJobId] = useState<string | null>(null),
+    [commentCheckStartedAt, setCommentCheckStartedAt] = useState<number | null>(null),
     [autoStartedJobIds, setAutoStartedJobIds] = useState<Set<string>>(() => new Set());
   const busy = useRef(false);
   const delay = useRef(10_000);
@@ -187,6 +189,26 @@ function App() {
       window.clearInterval(interval);
     };
   }, [activeJobId]);
+  useEffect(() => {
+    if (!commentCheckingJobId) return;
+    let cancelled = false;
+    const refreshCommentProgress = async () => {
+      try {
+        const events = await invoke<JobDebugEvent[]>('list_job_debug', {
+          jobId: commentCheckingJobId,
+        });
+        if (!cancelled) setJobDebug(events);
+      } catch {
+        // Progress details are optional; the background comment check should continue quietly.
+      }
+    };
+    void refreshCommentProgress();
+    const interval = window.setInterval(refreshCommentProgress, 1_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [commentCheckingJobId]);
   const run = async (job: Job, issueOverride?: Issue, startedAutomatically = false) => {
     while (startedAutomatically && runningJobId.current) {
       await new Promise((resolve) => window.setTimeout(resolve, 500));
@@ -288,7 +310,7 @@ function App() {
     })();
   }, [autoQueue, repos, issues]);
   useEffect(() => {
-    if (activeJobId || runningJobId.current) return;
+    if (activeJobId || commentCheckingJobId || runningJobId.current) return;
     const now = Date.now();
     if (now < nextCommentPollAt.current) return;
     const job = jobs
@@ -302,8 +324,9 @@ function App() {
     if (!issue) return;
 
     runningJobId.current = job.id;
-    setActiveJobId(job.id);
     setJobDebug([]);
+    setCommentCheckStartedAt(Date.now());
+    setCommentCheckingJobId(job.id);
     void invoke<{ checked: number; ignored: number; updated: number }>('process_issue_comments', {
       job: {
         ...job,
@@ -339,9 +362,23 @@ function App() {
         commentPollAfter.current.set(job.id, nextPoll);
         nextCommentPollAt.current = nextPoll;
         runningJobId.current = null;
-        setActiveJobId(null);
+        setCommentCheckingJobId(null);
+        setCommentCheckStartedAt(null);
       });
-  }, [jobs, issues, activeJobId, load]);
+  }, [jobs, issues, activeJobId, commentCheckingJobId, load]);
+  const commentProgressEvents = jobDebug.filter((event) => {
+    if (
+      !commentCheckingJobId ||
+      !commentCheckStartedAt ||
+      event.job_id !== commentCheckingJobId ||
+      !event.phase?.startsWith('comment-')
+    ) {
+      return false;
+    }
+    const createdAt = Date.parse(`${event.created_at.replace(' ', 'T')}Z`);
+    return createdAt >= Math.floor(commentCheckStartedAt / 1_000) * 1_000;
+  });
+  const hasCommentProgress = commentProgressEvents.length > 0;
   const content = useMemo(() => {
     if (tab === 'settings')
       return (
@@ -495,11 +532,17 @@ function App() {
                               ? 'Approved and queued'
                               : 'Job status'}
                         </h3>
-                        <JobProgress
-                          job={issueJob}
-                          events={issueJob.id === activeJobId ? jobDebug : []}
-                          locallyRunning={issueJob.id === activeJobId}
-                        />
+                        {(issueJob.status !== 'succeeded' ||
+                          (commentCheckingJobId === issueJob.id && hasCommentProgress)) && (
+                          <JobProgress
+                            job={issueJob}
+                            events={issueJob.id === activeJobId ? jobDebug : commentProgressEvents}
+                            locallyRunning={
+                              issueJob.id === activeJobId ||
+                              (commentCheckingJobId === issueJob.id && hasCommentProgress)
+                            }
+                          />
+                        )}
                         <button className="secondary" onClick={() => setTab('jobs')}>
                           View job details
                         </button>
@@ -554,11 +597,15 @@ function App() {
                     {j.stop_requested && ' · stop requested'}
                   </p>
                   {(activeJobId === j.id ||
+                    (commentCheckingJobId === j.id && hasCommentProgress) ||
                     ['running', 'claimed', 'in_progress'].includes(j.status)) && (
                     <JobProgress
                       job={j}
-                      events={j.id === activeJobId ? jobDebug : []}
-                      locallyRunning={j.id === activeJobId}
+                      events={j.id === activeJobId ? jobDebug : commentProgressEvents}
+                      locallyRunning={
+                        j.id === activeJobId ||
+                        (commentCheckingJobId === j.id && hasCommentProgress)
+                      }
                     />
                   )}
                   {j.result_summary && (
@@ -572,7 +619,10 @@ function App() {
                   <div className="job-actions">
                     {j.status === 'queued' && (
                       <>
-                        <button onClick={() => run(j)} disabled={!issue || activeJobId !== null}>
+                        <button
+                          onClick={() => run(j)}
+                          disabled={!issue || activeJobId !== null || commentCheckingJobId !== null}
+                        >
                           Run locally
                         </button>
                         {!issue && (
@@ -667,6 +717,9 @@ function App() {
     jobServerSnapshot,
     jobRunResult,
     activeJobId,
+    commentCheckingJobId,
+    hasCommentProgress,
+    commentProgressEvents,
     autoStartedJobIds,
     run,
   ]);
