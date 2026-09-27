@@ -371,6 +371,45 @@ pre {
   background: #121c2a;
   color: #d5e0ef;
 }
+.comment-watch {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-left: 3px solid #5a8fe0;
+  background: #121c2a;
+  color: #c9d5e6;
+  font-size: 0.9rem;
+}
+.comment-watch-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+}
+.comment-watch-indicator {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #65d6b0;
+}
+.comment-review-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+.comment-review-list li {
+  padding-left: 2px;
+}
+.comment-review-list b,
+.comment-review-list span {
+  display: block;
+}
+.comment-review-list span {
+  margin-top: 3px;
+  color: #aebfd5;
+  overflow-wrap: anywhere;
+}
 .runner-result {
   max-width: 860px;
   margin: 14px 0 20px;

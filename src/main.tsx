@@ -22,6 +22,16 @@ const api = createApi((path, init = {}) =>
   }),
 );
 type Tab = 'settings' | 'repositories' | 'issues' | 'jobs' | 'recovery';
+type CommentReview = {
+  comment_id: string;
+  classification: 'change_request' | 'comment' | 'unrelated';
+  outcome: 'ignored' | 'applied' | 'no_changes';
+  reason: string;
+};
+type CommentWatchState = {
+  checkedAt: string;
+  reviews: CommentReview[];
+};
 function App() {
   const [tab, setTab] = useState<Tab>('settings'),
     [settings, setSettings] = useState<Settings | null>(null),
@@ -39,6 +49,7 @@ function App() {
     [jobDebug, setJobDebug] = useState<JobDebugEvent[]>([]),
     [jobServerSnapshot, setJobServerSnapshot] = useState<unknown>(null),
     [jobRunResult, setJobRunResult] = useState<unknown>(null),
+    [commentWatchByJob, setCommentWatchByJob] = useState<Record<string, CommentWatchState>>({}),
     [autoQueue, setAutoQueue] = useState<Issue[]>([]),
     [activeJobId, setActiveJobId] = useState<string | null>(null),
     [commentCheckingJobId, setCommentCheckingJobId] = useState<string | null>(null),
@@ -327,7 +338,12 @@ function App() {
     setJobDebug([]);
     setCommentCheckStartedAt(Date.now());
     setCommentCheckingJobId(job.id);
-    void invoke<{ checked: number; ignored: number; updated: number }>('process_issue_comments', {
+    void invoke<{
+      checked: number;
+      ignored: number;
+      updated: number;
+      reviews: CommentReview[];
+    }>('process_issue_comments', {
       job: {
         ...job,
         repository_id: issue.repository_id,
@@ -336,6 +352,15 @@ function App() {
       },
     })
       .then((result) => {
+        setCommentWatchByJob((current) => ({
+          ...current,
+          [job.id]: {
+            checkedAt: new Date().toISOString(),
+            reviews: result.reviews.length
+              ? result.reviews.slice(-3)
+              : (current[job.id]?.reviews ?? []),
+          },
+        }));
         if (result.updated > 0) {
           setMessage(
             `Applied ${result.updated} issue ${result.updated === 1 ? 'change request' : 'change requests'} to the existing pull request.`,
@@ -543,6 +568,12 @@ function App() {
                             }
                           />
                         )}
+                        {issueJob.status === 'succeeded' && issueJob.pr_url && (
+                          <CommentWatchStatus
+                            state={commentWatchByJob[issueJob.id]}
+                            reviews={commentWatchByJob[issueJob.id]?.reviews ?? []}
+                          />
+                        )}
                         <button className="secondary" onClick={() => setTab('jobs')}>
                           View job details
                         </button>
@@ -615,6 +646,12 @@ function App() {
                     <p>
                       <a href={j.pr_url}>Open draft PR</a>
                     </p>
+                  )}
+                  {j.status === 'succeeded' && j.pr_url && (
+                    <CommentWatchStatus
+                      state={commentWatchByJob[j.id]}
+                      reviews={commentWatchByJob[j.id]?.reviews ?? []}
+                    />
                   )}
                   <div className="job-actions">
                     {j.status === 'queued' && (
@@ -716,6 +753,7 @@ function App() {
     jobDebug,
     jobServerSnapshot,
     jobRunResult,
+    commentWatchByJob,
     activeJobId,
     commentCheckingJobId,
     hasCommentProgress,
@@ -859,6 +897,49 @@ function compactSummary(summary: string): string {
   }
   const singleLine = trimmed.replace(/\s+/g, ' ');
   return singleLine.length > 220 ? `${singleLine.slice(0, 217)}…` : singleLine;
+}
+function CommentWatchStatus({
+  state,
+  reviews,
+}: {
+  state: CommentWatchState | undefined;
+  reviews: CommentReview[];
+}) {
+  return (
+    <section className="comment-watch" aria-live="polite">
+      <p className="comment-watch-status">
+        <span className="comment-watch-indicator" aria-hidden="true" />
+        Watching issue comments
+        <span>
+          {state
+            ? ` · Last checked ${new Date(state.checkedAt).toLocaleString()}`
+            : ' · Waiting for first check'}
+        </span>
+      </p>
+      {reviews.length > 0 && (
+        <ul className="comment-review-list">
+          {reviews.map((review) => {
+            const label =
+              review.classification === 'comment'
+                ? 'Not a change request'
+                : review.classification === 'unrelated'
+                  ? 'Unrelated to this issue'
+                  : review.outcome === 'applied'
+                    ? 'Change request applied to the existing PR'
+                    : 'Change request reviewed; no code changes needed';
+            return (
+              <li key={`${review.comment_id}-${review.classification}-${review.outcome}`}>
+                <b>
+                  Comment #{review.comment_id}: {label}
+                </b>
+                {review.reason && <span>{review.reason}</span>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
 }
 function RunnerResult({ result }: { result: unknown }) {
   const envelope = asRecord(result);

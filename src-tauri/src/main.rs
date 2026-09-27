@@ -1396,6 +1396,7 @@ async fn run_issue_comment_check(job: Value, s: &AppState) -> Result<Value> {
     let mut checked = 0;
     let mut ignored = 0;
     let mut updated = 0;
+    let mut reviews = Vec::new();
     for comment in comments {
         let Some(comment_id) = comment["id"].as_i64().map(|id| id.to_string()) else {
             continue;
@@ -1500,13 +1501,20 @@ async fn run_issue_comment_check(job: Value, s: &AppState) -> Result<Value> {
             .as_str()
             .unwrap_or("No reason returned");
         if decision != "change_request" {
+            let reason = truncated_to(reason, 300);
             {
                 let db = s.db.lock().await;
                 db.execute(
                     "UPDATE issue_comment_reviews SET decision='ignored',reason=? WHERE job_id=? AND comment_id=?",
-                    params![truncated_to(reason, 500), job_id, comment_id],
+                    params![truncated_to(&reason, 500), job_id, comment_id],
                 )?;
             }
+            reviews.push(json!({
+                "comment_id": comment_id,
+                "classification": decision,
+                "outcome": "ignored",
+                "reason": reason,
+            }));
             ignored += 1;
             debug_event(
                 s,
@@ -1539,13 +1547,20 @@ async fn run_issue_comment_check(job: Value, s: &AppState) -> Result<Value> {
         {
             Ok(result) => {
                 let did_update = result["updated"].as_bool().unwrap_or(false);
+                let review_reason = truncated_to(result["reason"].as_str().unwrap_or(reason), 300);
                 {
                     let db = s.db.lock().await;
                     db.execute(
                         "UPDATE issue_comment_reviews SET decision=?,reason=? WHERE job_id=? AND comment_id=?",
-                        params![if did_update { "applied" } else { "no_changes" }, truncated_to(result["reason"].as_str().unwrap_or(reason), 500), job_id, comment_id],
+                        params![if did_update { "applied" } else { "no_changes" }, truncated_to(&review_reason, 500), job_id, comment_id],
                     )?;
                 }
+                reviews.push(json!({
+                    "comment_id": comment_id,
+                    "classification": decision,
+                    "outcome": if did_update { "applied" } else { "no_changes" },
+                    "reason": review_reason,
+                }));
                 if did_update {
                     updated += 1;
                 } else {
@@ -1587,7 +1602,7 @@ async fn run_issue_comment_check(job: Value, s: &AppState) -> Result<Value> {
             }
         }
     }
-    Ok(json!({ "checked": checked, "ignored": ignored, "updated": updated }))
+    Ok(json!({ "checked": checked, "ignored": ignored, "updated": updated, "reviews": reviews }))
 }
 
 #[tauri::command]
