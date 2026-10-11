@@ -11,6 +11,7 @@ import {
 } from './followIssues';
 import type { Issue, Job, JobDebugEvent, Repository, Settings } from './types';
 import './style.css';
+import { FeaturesWorkspace } from './features/factory/FeaturesWorkspace';
 
 const id = () => crypto.randomUUID();
 const api = createApi((path, init = {}) =>
@@ -21,7 +22,7 @@ const api = createApi((path, init = {}) =>
     idempotencyKey: (init.headers as Record<string, string> | undefined)?.['Idempotency-Key'],
   }),
 );
-type Tab = 'settings' | 'repositories' | 'issues' | 'jobs' | 'recovery';
+type Tab = 'settings' | 'repositories' | 'issues' | 'jobs' | 'recovery' | 'features';
 type CommentReview = {
   comment_id: string;
   classification: 'change_request' | 'comment' | 'unrelated';
@@ -251,8 +252,15 @@ function App() {
       if (startedAutomatically) {
         setAutoStartedJobIds((current) => new Set(current).add(job.id));
       }
-      setMessage('Claiming and starting local runner…');
-      const result = await invoke('execute_job', { job: enriched });
+      setMessage(
+        startedAutomatically
+          ? 'Waiting for the runner, then claiming the queued issue job…'
+          : 'Claiming and starting local runner…',
+      );
+      const result = await invoke('execute_job', {
+        job: enriched,
+        waitForRunner: startedAutomatically,
+      });
       setJobRunResult({ jobId: job.id, ok: true, result });
       setMessage('Local runner finished; Worker status is being refreshed.');
       await load();
@@ -405,6 +413,7 @@ function App() {
   });
   const hasCommentProgress = commentProgressEvents.length > 0;
   const content = useMemo(() => {
+    if (tab === 'features') return <FeaturesWorkspace repositories={repos} issues={issues} />;
     if (tab === 'settings')
       return (
         <SettingsPane
@@ -765,11 +774,13 @@ function App() {
     <main>
       <aside>
         <h1>Issue Pilot</h1>
-        {(['settings', 'repositories', 'issues', 'jobs', 'recovery'] as Tab[]).map((t) => (
-          <button key={t} className={tab === t ? 'nav active' : 'nav'} onClick={() => setTab(t)}>
-            {t}
-          </button>
-        ))}
+        {(['features', 'settings', 'repositories', 'issues', 'jobs', 'recovery'] as Tab[]).map(
+          (t) => (
+            <button key={t} className={tab === t ? 'nav active' : 'nav'} onClick={() => setTab(t)}>
+              {t}
+            </button>
+          ),
+        )}
         <footer className={offline ? 'offline' : ''}>
           {offline ? 'Offline · retrying' : 'Connected / ready'}
         </footer>

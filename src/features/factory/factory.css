@@ -1,0 +1,189 @@
+.factory-workspace {
+  max-width: 1400px;
+}
+.factory-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.factory-layout {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.factory-inbox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.factory-inbox button {
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.factory-inbox button.selected {
+  border-color: #599fff;
+  background: #203752;
+}
+.factory-inbox span,
+.factory-repository small,
+.factory-tasks span,
+.factory-panel time {
+  color: #a7b7cb;
+  font-size: 0.85rem;
+}
+.factory-detail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.factory-panel {
+  background: #151e2c;
+  border: 1px solid #334156;
+  border-radius: 12px;
+  padding: 20px;
+  min-width: 0;
+}
+.factory-panel h3 {
+  margin-top: 0;
+}
+.factory-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 14px 0;
+}
+.factory-panel input,
+.factory-panel select,
+.factory-panel textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+.factory-panel .factory-check {
+  flex-direction: row;
+  align-items: flex-start;
+}
+.factory-panel .factory-check input {
+  width: auto;
+  margin-top: 4px;
+}
+.factory-panel fieldset {
+  border: 1px solid #334156;
+  border-radius: 8px;
+}
+.factory-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.factory-error {
+  color: #ffb4b4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.factory-status {
+  text-transform: capitalize;
+  color: #91bfff;
+}
+.factory-brief,
+.factory-conversation p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.factory-conversation {
+  max-height: 340px;
+  overflow: auto;
+}
+.factory-conversation article {
+  border-left: 2px solid #466f9f;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+.factory-repository {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 12px;
+  background: #101824;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.factory-tasks {
+  padding-left: 22px;
+}
+.factory-tasks li {
+  padding: 8px;
+  margin-bottom: 8px;
+}
+.factory-tasks span {
+  display: block;
+  margin-top: 6px;
+}
+.factory-panel code {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.factory-panel pre {
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #0d1420;
+  padding: 12px;
+  border-radius: 8px;
+}
+.factory-panel details {
+  margin-top: 16px;
+}
+.factory-panel summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.factory-panel article small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.factory-editor {
+  font-family: monospace;
+}
+@media (max-width: 1100px) {
+  .factory-layout {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+}
+@media (max-width: 750px) {
+  .factory-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .factory-inbox {
+    max-height: 220px;
+    overflow: auto;
+  }
+}
+
+.factory-panel textarea {
+  font: inherit;
+  padding: 10px;
+  border: 1px solid #3a4b65;
+  border-radius: 6px;
+  background: #0f1520;
+  color: #e7ebf2;
+  resize: vertical;
+}
+.factory-panel .factory-editor {
+  font-family: monospace;
+}
+.factory-inbox button {
+  border: 1px solid #334156;
+  background: #17202c;
+}
+.factory-workspace :is(button, input, textarea, select, summary):focus-visible {
+  outline: 2px solid #91bfff;
+  outline-offset: 3px;
+}

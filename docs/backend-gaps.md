@@ -1,14 +1,18 @@
-# Worker gaps verified against `../cloud-service`
+# Worker lifecycle integration
 
-The desktop client only calls endpoints actually implemented in the Worker. These gaps block stronger guarantees and must be addressed server-side.
+The neighboring `../cloud-service` source now implements several guarantees previously listed here as gaps. This document describes the current integration rather than assuming the old limitations still apply.
 
-| Gap | Required Worker change | Acceptance criteria |
+| Capability | Current Worker implementation | Desktop behavior |
 |---|---|---|
-| Cursor pagination | Add `cursor` to `GET /v1/repositories`, `/issues`, and `/jobs`, returning `{ items, next_cursor }`. | A client can retrieve every record beyond 100 without duplicates while records are inserted. |
-| Terminal reconciliation | Permit idempotent terminal `POST /v1/jobs/:id/status` for the same `{claim_id, status, commit_sha, pr_url}` and expose a reconciliation result. | A lost response after push/PR can be resent and returns the stored terminal result, including after the job is no longer `running`. |
-| Retry safety | In `/retry`, verify current issue is open, repository active/access active, and the saved `issue_version` is current; return `409 issue_changed` otherwise. | An interrupted old snapshot cannot be retried after the issue changes or closes. |
-| Stop/revocation enforcement | When repository access is revoked/deactivated, set `stop_requested=1` for running jobs and reject heartbeat/status external-write phases. | A runner observes stop/revocation before push and PR creation. |
-| Claim validation endpoint | Add `GET /v1/jobs/:id/claim?claim_id=…` returning `{valid, stop_requested, repository_active, issue_state}`. | Desktop can check a claim immediately before push and PR creation without inferring it from an unrelated job read. |
-| Sync integrity | Make webhook updates and paginated GitHub sync atomic per page/version and expose sync progress/error state. | Concurrent webhook/sync cannot regress an issue version; clients can distinguish queued, running, completed and failed sync. |
+| Cursor pagination | Repository, issue, and job lists return `{ items, next_cursor }`. | Desktop follows cursors and fails visibly on malformed/repeated cursors. |
+| Terminal reconciliation | Identical terminal status payloads for the saved claim reconcile after the job becomes terminal. | Existing local outbox retries the persisted terminal payload. |
+| Retry safety | Retry checks issue version/state and repository activity/access. | An old or inaccessible issue snapshot cannot be retried successfully. |
+| Stop/revocation enforcement | Deactivation/revocation requests stop; heartbeat and external-write status updates check current access/state. | Issue runner observes stop and validates claims before push/PR creation. |
+| Claim validation | `GET /v1/jobs/:id/claim?claim_id=…` exposes current claim validity. | Issue runner checks immediately before external writes. |
+| Sync progress | Worker stores queued/running/completed/failed sync state and guards issue updates by version. | Repository synchronization remains Worker-owned. |
 
-The current API has limit-only lists and status updates select only running jobs. Repository discovery also queries the GitHub App's installations, so it can recover from a missed installation webhook on a fresh database. The desktop therefore shows these limits and leaves interrupted executions for explicit human recovery.
+These statements describe repository source, not the version currently deployed at a configured Worker URL. Deploy a compatible Worker before relying on these guarantees. Issue jobs still become interrupted after heartbeat expiry and require explicit recovery; the desktop does not restart them automatically.
+
+The feature factory owns its workflow locally and does not create synthetic Worker jobs for tasks. It checks current repository activity/access through the Worker before execution and external writes. Its independent local operation ledger reconciles Git branches and GitHub PRs; see [feature-factory.md](feature-factory.md).
+
+A claim or access check and the following GitHub write are separate operations. Revocation cannot atomically undo a push or PR action that has already begun. Multi-repository publication/readiness is also sequential; persisted intents make partial completion inspectable and retryable.

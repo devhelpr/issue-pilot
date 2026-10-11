@@ -36,3 +36,29 @@ describe('Worker API mapping', () => {
     expect(calls[2][1].body).toContain('succeeded');
   });
 });
+
+describe('Worker pagination', () => {
+  it('loads records beyond the first page for repositories, issues, and jobs', async () => {
+    const paths: string[] = [];
+    const api = createApi(async (path) => {
+      paths.push(path);
+      return path.includes('cursor=')
+        ? { items: [{ id: 101 }], next_cursor: null }
+        : { items: [{ id: 1 }], next_cursor: 'next+page/=' };
+    });
+    for (const result of [
+      await api.repositories(),
+      await api.issues(7),
+      await api.jobs('queued'),
+    ]) {
+      expect(result.items.map((item) => item.id)).toEqual([1, 101]);
+    }
+    expect(paths[1]).toContain('cursor=next%2Bpage%2F%3D');
+    expect(paths[3]).toContain('repository_id=7&cursor=');
+    expect(paths[5]).toContain('status=queued&cursor=');
+  });
+  it('fails visibly if the Worker repeats a cursor', async () => {
+    const api = createApi(async () => ({ items: [], next_cursor: 'same' }));
+    await expect(api.repositories()).rejects.toThrow('repeated');
+  });
+});

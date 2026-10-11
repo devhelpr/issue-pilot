@@ -15,12 +15,22 @@ use tauri::{Manager, State};
 use tokio::{process::Command, sync::Mutex, task::JoinHandle};
 use uuid::Uuid;
 
+#[path = "features/factory/mod.rs"]
+mod factory;
+#[path = "core/scheduler.rs"]
+mod scheduler;
+
 const SERVICE: &str = "com.issuepilot.desktop";
 
 #[derive(Clone)]
 struct AppState {
     db: Arc<Mutex<Connection>>,
     running: Arc<Mutex<bool>>,
+    factory_control: Arc<std::sync::atomic::AtomicU8>,
+    factory_pid: Arc<std::sync::atomic::AtomicU32>,
+    active_feature: Arc<Mutex<Option<String>>>,
+    #[cfg(test)]
+    test_repositories: Option<Vec<Value>>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,6 +89,7 @@ fn init(app: &tauri::AppHandle) -> Result<Connection> {
     std::fs::create_dir_all(&dir)?;
     let db = Connection::open(dir.join("issue-pilot.sqlite"))?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);CREATE TABLE IF NOT EXISTS repo_links(repository_id INTEGER PRIMARY KEY,local_path TEXT NOT NULL,base_branch TEXT NOT NULL,test_command TEXT NOT NULL);CREATE TABLE IF NOT EXISTS checkpoints(job_id TEXT PRIMARY KEY,phase TEXT,worktree TEXT,branch TEXT,detail TEXT,updated_at TEXT DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS outbox(id INTEGER PRIMARY KEY,job_id TEXT,payload TEXT);CREATE TABLE IF NOT EXISTS debug_events(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT NOT NULL,phase TEXT,level TEXT NOT NULL,message TEXT NOT NULL,detail TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS issue_comment_sync(job_id TEXT PRIMARY KEY,initialized_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS issue_comment_reviews(job_id TEXT NOT NULL,comment_id TEXT NOT NULL,updated_at TEXT NOT NULL,decision TEXT NOT NULL,reason TEXT,PRIMARY KEY(job_id,comment_id));")?;
+    factory::migrate(&db)?;
     if get(&db, "client_id").is_empty() {
         put(&db, "client_id", &Uuid::new_v4().to_string())?;
     }
@@ -1607,25 +1618,23 @@ async fn run_issue_comment_check(job: Value, s: &AppState) -> Result<Value> {
 
 #[tauri::command]
 async fn process_issue_comments(job: Value, state: State<'_, AppState>) -> Result<Value, String> {
-    let mut running = state.running.lock().await;
-    if *running {
+    if !scheduler::reserve(&state.running, false).await {
         return Err("Runner is busy; issue comment scan will retry later".into());
     }
-    *running = true;
-    drop(running);
     let result = run_issue_comment_check(job, &state).await;
     *state.running.lock().await = false;
     result.map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-async fn execute_job(job: Value, state: State<'_, AppState>) -> Result<Value, String> {
-    let mut running = state.running.lock().await;
-    if *running {
+async fn execute_job(
+    job: Value,
+    wait_for_runner: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    if !scheduler::reserve(&state.running, wait_for_runner.unwrap_or(false)).await {
         return Err("Another job is already executing".into());
     }
-    *running = true;
-    drop(running);
     flush_outbox(&state).await;
     let result = run_job(job, &state).await;
     *state.running.lock().await = false;
@@ -1644,6 +1653,11 @@ fn main() {
             app.manage(AppState {
                 db: Arc::new(Mutex::new(db)),
                 running: Arc::new(Mutex::new(false)),
+                factory_control: Arc::new(std::sync::atomic::AtomicU8::new(0)),
+                factory_pid: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                active_feature: Arc::new(Mutex::new(None)),
+                #[cfg(test)]
+                test_repositories: None,
             });
             Ok(())
         })
@@ -1658,10 +1672,27 @@ fn main() {
             list_job_debug,
             check_tools,
             process_issue_comments,
-            execute_job
+            execute_job,
+            factory::list_features,
+            factory::create_feature,
+            factory::plan_feature,
+            factory::save_feature_revision,
+            factory::approve_feature_revision,
+            factory::execute_feature,
+            factory::control_feature,
+            factory::approve_feature_delivery,
+            factory::feature_feedback,
+            factory::sync_feature_feedback
         ])
-        .run(tauri::generate_context!())
-        .expect("tauri error");
+        .build(tauri::generate_context!())
+        .expect("tauri error")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let state = app.state::<AppState>();
+                state.factory_control.store(2, Ordering::SeqCst);
+                factory::terminate_process_group(state.factory_pid.load(Ordering::SeqCst));
+            }
+        });
 }
 
 #[cfg(test)]
